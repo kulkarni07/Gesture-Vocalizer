@@ -1,0 +1,179 @@
+#include <Wire.h>
+#include <MPU6050.h>
+
+MPU6050 mpu;
+
+#define FLEX1 A0
+#define FLEX2 A1
+#define FLEX3 A2
+#define FLEX4 A3
+#define FLEX5 A4
+
+#define BLUETOOTH_TX 10
+#define BLUETOOTH_RX 11
+
+#include <SoftwareSerial.h>
+SoftwareSerial bluetooth(BLUETOOTH_RX, BLUETOOTH_TX); // Declare Bluetooth globally
+
+// Threshold variables
+int flexMin[5] = {0, 0, 0, 0, 0};
+int flexMax[5] = {0, 0, 0, 0, 0};
+int16_t ax, ay, az;
+
+void setup() {
+  Serial.begin(9600); // For debugging
+  bluetooth.begin(9600); // Initialize Bluetooth communication
+
+  pinMode(FLEX1, INPUT);
+  pinMode(FLEX2, INPUT);
+  pinMode(FLEX3, INPUT);
+  pinMode(FLEX4, INPUT);
+  pinMode(FLEX5, INPUT);
+
+  // Initialize MPU6050
+  Wire.begin();
+  mpu.initialize();
+  if (!mpu.testConnection()) {
+    Serial.println("MPU6050 connection failed!");
+    while (1);
+  }
+
+  // Calculate thresholds for straight and bent positions
+  Serial.println("Place the glove in a neutral (straight) position to calculate thresholds.");
+  bluetooth.println("Place the glove in a neutral (straight) position to calculate thresholds.");
+  delay(5000);
+  calculateThresholds(flexMin, "straight");
+
+  Serial.println("Now bend your fingers to calculate thresholds.");
+  bluetooth.println("Now bend your fingers to calculate thresholds.");
+  delay(5000);
+  calculateThresholds(flexMax, "bent");
+}
+
+void loop() {
+  int flexValues[5] = {
+    analogRead(FLEX1),
+    analogRead(FLEX2),
+    analogRead(FLEX3),
+    analogRead(FLEX4),
+    analogRead(FLEX5)
+  };
+
+  mpu.getAcceleration(&ax, &ay, &az);
+
+  String gesture = detectGesture(flexValues, ax, ay, az);
+
+  if (gesture != "") {
+    Serial.println("Gesture detected: " + gesture);
+    processGesture(gesture);
+  }
+
+  delay(500); // Small delay to avoid spamming
+}
+
+void calculateThresholds(int thresholdArray[], String position) {
+  int flexValues[5][100];
+
+  for (int i = 0; i < 100; i++) {
+    flexValues[0][i] = analogRead(FLEX1);
+    flexValues[1][i] = analogRead(FLEX2);
+    flexValues[2][i] = analogRead(FLEX3);
+    flexValues[3][i] = analogRead(FLEX4);
+    flexValues[4][i] = analogRead(FLEX5);
+    delay(50);
+  }
+
+  for (int i = 0; i < 5; i++) {
+    thresholdArray[i] = 0;
+    for (int j = 0; j < 100; j++) {
+      thresholdArray[i] += flexValues[i][j];
+    }
+    thresholdArray[i] /= 100; // Calculate average value
+  }
+
+  Serial.println("Thresholds calculated for " + position + " position:");
+  for (int i = 0; i < 5; i++) {
+    Serial.print("Sensor ");
+    Serial.print(i + 1);
+    Serial.print(" -> ");
+    Serial.println(thresholdArray[i]);
+    bluetooth.print("Sensor ");
+    bluetooth.print(i + 1);
+    bluetooth.print(" -> ");
+    bluetooth.println(thresholdArray[i]);
+  }
+}
+
+String detectGesture(int flexValues[], int16_t ax, int16_t ay, int16_t az) {
+  // Gesture: Hello (wave up and down with hand open)
+  if (flexValues[0] >= flexMin[0] && flexValues[1] >= flexMin[1] &&
+      flexValues[2] >= flexMin[2] && flexValues[3] >= flexMin[3] &&
+      flexValues[4] >= flexMin[4] && (ax > 8000 || ax < -8000)) {
+    return "HELLO";
+  }
+
+  // Gesture: Thank You (hand open, move up slightly and tilt forward)
+  if (flexValues[0] >= flexMin[0] && flexValues[1] >= flexMin[1] &&
+      flexValues[2] >= flexMin[2] && flexValues[3] >= flexMin[3] &&
+      flexValues[4] >= flexMin[4] && ay > 5000 && az > 5000) {
+    return "THANK YOU";
+  }
+
+  // Gesture: Please (hand open, tilt downward slightly)
+  if (flexValues[0] >= flexMin[0] && flexValues[1] >= flexMin[1] &&
+      flexValues[2] >= flexMin[2] && flexValues[3] >= flexMin[3] &&
+      flexValues[4] >= flexMin[4] && az < -5000) {
+    return "PLEASE";
+  }
+
+  // Gesture: Stop (hand upright, all fingers straight)
+  if (flexValues[0] >= flexMin[0] && flexValues[1] >= flexMin[1] &&
+      flexValues[2] >= flexMin[2] && flexValues[3] >= flexMin[3] &&
+      flexValues[4] >= flexMin[4] && ax > 7000) {
+    return "STOP";
+  }
+
+  // Gesture: Goodbye (wave left and right with hand open)
+  if (flexValues[0] >= flexMin[0] && flexValues[1] >= flexMin[1] &&
+      flexValues[2] >= flexMin[2] && flexValues[3] >= flexMin[3] &&
+      flexValues[4] >= flexMin[4] && (ax > 7000 || ax < -7000)) {
+    return "GOODBYE";
+  }
+
+  // Gesture: OK (thumb and index finger bent, others straight)
+  if (flexValues[0] <= flexMax[0] && flexValues[1] <= flexMax[1] &&
+      flexValues[2] >= flexMin[2] && flexValues[3] >= flexMin[3] &&
+      flexValues[4] >= flexMin[4]) {
+    return "OK";
+  }
+
+  // Gesture: Help (thumb and pinky bent, others straight)
+  if (flexValues[0] <= flexMax[0] && flexValues[1] <= flexMax[1] &&
+      flexValues[2] <= flexMax[2] && flexValues[3] >= flexMin[3] &&
+      flexValues[4] <= flexMax[4]) {
+    return "HELP";
+  }
+
+  return "";
+}
+
+void processGesture(String gesture) {
+  if (gesture == "HELLO") {
+    bluetooth.println("HELLO");
+    Serial.println("Detected: HELLO");
+  } else if (gesture == "THANK YOU") {
+    bluetooth.println("THANK YOU");
+    Serial.println("Detected: THANK YOU");
+  } else if (gesture == "PLEASE") {
+    bluetooth.println("PLEASE");
+    Serial.println("Detected: PLEASE");
+  } else if (gesture == "STOP") {
+    bluetooth.println("STOP");
+    Serial.println("Detected: STOP");
+  } else if (gesture == "GOODBYE") {
+    bluetooth.println("GOODBYE");
+    Serial.println("Detected: GOODBYE");
+  } else {
+    Serial.println("Unknown gesture: " + gesture);
+  }
+}
